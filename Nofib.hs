@@ -150,7 +150,7 @@ main = do
             when clean $
                 removeDirectoryRecursive output
 
-            linker <- newResource "ghc linker" 1
+            linker <- newResourceIO "ghc linker" 1
             shake shakeOptions
                 {shakeThreads=threads
                 ,shakeFiles=output ++ "/"
