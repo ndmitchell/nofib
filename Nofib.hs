@@ -252,7 +252,8 @@ runTest Build{run=Just speed,..} test = do
     putStrLn $ "==nofib== " ++ takeDirectory1 test ++ ": time to run " ++ takeBaseName test ++ " follows..."
     config <- readConfig $ output </> test </> "config.txt"
     let args = words (config "PROG_ARGS") ++ words (config $ map toUpper (show speed) ++ "_OPTS")
-    stdin <- let s = config "STDIN_FILE" in if s == "" then grab "stdin" else readFile $ test </> s
+    let stdoutBinary = "-stdout-binary" `elem` words (config "PROG_ARGS")
+    stdin <- let s = config "STDIN_FILE" in if s == "" then grab False "stdin" else readFile $ test </> s
     stats <- fmap (</> "stat.txt") (IO.canonicalizePath $ output </> test)
 
     fmap and $ replicateM times $ do
@@ -260,26 +261,27 @@ runTest Build{run=Just speed,..} test = do
         (code,stdout,stderr) <- readProcessWithExitCodeAndWorkingDirectory
             test (output </> test </> "Main" <.> exe) (args++"+RTS":rts++["-t"++stats]) stdin
         end <- getCurrentTime
-        stdoutWant <- grab "stdout"
-        stderrWant <- grab "stderr"
-        writeFile (output </> test </> "stdout") stdout
+        stdoutWant <- grab stdoutBinary "stdout"
+        stderrWant <- grab False "stderr"
+        (if stdoutBinary then writeFileBinary else writeFile) (output </> test </> "stdout") stdout
         writeFile (output </> test </> "stderr") stderr
         putStrLn $ show (floor $ fromRational (toRational $ end `diffUTCTime` start) * 1000) ++ "ms"
         putStr =<< readFile stats
+        let out x = if stdoutBinary then show (length x) ++ " bytes" else snip x
         err <- return $
             if not skip_check && stderr /= stderrWant then "FAILED STDERR\nWANTED: " ++ snip stderrWant ++ "\nGOT: " ++ snip stderr
-            else if not skip_check && stdout /= stdoutWant then "FAILED STDOUT\nWANTED: " ++ snip stdoutWant ++ "\nGOT: " ++ snip stdout
+            else if not skip_check && stdout /= stdoutWant then "FAILED STDOUT\nWANTED: " ++ out (stdoutWant) ++ "\nGOT: " ++ out (stdout)
             else if not skip_check && code /= ExitSuccess then "FAILED EXIT CODE " ++ show code
             else ""
         if null err then return True else putStrLn err >> return False
     where
         snip x = if length x > 200 then take 200 x ++ "..." else x
 
-        grab ext = do
+        grab binary ext = do
             let s = [test </> takeFileName test <.> map toLower (show speed) ++ ext
                     ,test </> takeFileName test <.> ext]
             ss <- filterM IO.doesFileExist s
-            maybe (return "") readFile $ listToMaybe ss
+            maybe (return "") (if binary then readFileBinary else readFile) $ listToMaybe ss
 
 
 ---------------------------------------------------------------------
@@ -357,3 +359,16 @@ readProcessWithExitCodeAndWorkingDirectory cwd cmd args input = do
     ex <- waitForProcess pid
 
     return (ex, out, err)
+
+
+readFileBinary :: FilePath -> IO String
+readFileBinary file = do
+    res <- withBinaryFile file ReadMode $ \h -> do
+        src <- hGetContents h
+        evaluate $ length src
+        return src
+    return res
+
+
+writeFileBinary :: FilePath -> String -> IO ()
+writeFileBinary file contents = withBinaryFile file WriteMode $ \h -> hPutStr h contents
