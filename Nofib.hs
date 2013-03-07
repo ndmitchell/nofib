@@ -150,13 +150,12 @@ main = do
             when clean $
                 removeDirectoryRecursive output
 
-            linker <- newResourceIO "ghc linker" 1
             shake shakeOptions
                 {shakeThreads=threads
                 ,shakeFiles=output ++ "/"
                 ,shakeReport=Just $ output ++ "/shake_report.html"
                 ,shakeVerbosity=Development.Shake.Loud} $
-                    buildRules linker args
+                    buildRules args
             putStrLn "Build completed"
 
             when (isJust run) $ do
@@ -185,8 +184,8 @@ main = do
 --
 --   Most complication comes from modules not named Main, which still produce
 --   Main.o object files (I think ghc -M gets these wrong).
-buildRules :: Resource -> Nofib -> Rules ()
-buildRules r Build{..} = do
+buildRules :: Nofib -> Rules ()
+buildRules Build{..} = do
     let unoutput x =
             let f x = if hasExtension x then f $ takeDirectory x else x
             in f $ takeDirectory $ drop (length output + 1) x
@@ -203,6 +202,7 @@ buildRules r Build{..} = do
                 x:_ -> "MAIN = " ++ x
         writeFileLines out $ mainMod : convertConfig src
 
+    linker <- newResource "ghc linker" 1
     ("//Main" <.> exe) *> \out -> do
         deps <- readFile' $ replaceExtension out "deps"
         let os = nub [ if isLower $ head $ takeFileName x then replaceExtension out "o" else output </> x
@@ -213,7 +213,7 @@ buildRules r Build{..} = do
             obj = takeDirectory out
             name = takeFileName dir
         putNormal $ "==nofib== " ++ name ++ " : time to link " ++ name ++ " follows..."
-        withResource r 1 $
+        withResource linker 1 $
             system' compiler $ ["-package","array","-Rghc-timing","-rtsopts","-o",out] ++ os ++ way ++ words (config "SRC_HC_OPTS")
         putNormal $ "==nofib== " ++ name ++ ": size of " ++ name ++ " follows..."
         system' "size" [out]
